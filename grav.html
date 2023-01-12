@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+	<html lang="en">
+	<head>
+		<meta charset="UTF-8">
+		<meta http-equiv="X-UA-Compatible" content="IE=edge">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+		<title>3jsgs 0.0.0</title>
+	</head>
+	<body>
+		<style>
+			html, body {
+			   margin: 0;
+			   height: 100%;
+			   background-color: black;
+				color: white;
+			}
+			#canvas {
+			   width: 100%;
+			   height: 95%;
+			   display: block;
+			}
+			</style>
+		
+
+		<canvas id="canvas"></canvas>
+		<p>3js gravitator sim 0.0.0</p>
+	</body>
+
+	<script type="importmap">
+		{
+		"imports": {
+			"three": "./node_modules/three/build/three.module.js",
+			"three/addons/": "./node_modules/three/examples/jsm/"
+		}
+		}
+	</script>
+
+	<script type="module">
+		import * as THREE from 'three';
+		import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
+
+		function main() {
+			let current_id = 0;
+
+			const clock = new THREE.Clock();
+			const G = 0.00001;
+			const canvas = document.querySelector('#canvas');
+			const renderer = new THREE.WebGLRenderer({canvas});
+			const fov = 90;
+			const aspect = canvas.width/canvas.height;
+			const near = 0.1;
+			const far = 1000;
+
+			//CAMERA au ajaatro
+			const camera = new THREE.PerspectiveCamera(fov, aspect, near, far);
+			const controls = new OrbitControls( camera, renderer.domElement );
+
+			camera.position.z = 10;
+
+			const scene = new THREE.Scene();
+			const boxWidth = 1;
+			const boxHeight = 1;
+			const boxDepth = 1;
+			const box_geometry = new THREE.BoxGeometry(boxWidth, boxHeight, boxDepth);
+
+			const entities = [];
+
+			function makeInstance(pos, geometry, color) {
+				const material = new THREE.MeshPhongMaterial({color});
+				const instance = new THREE.Mesh(geometry, material);
+				instance.position.set(...pos);
+				scene.add(instance);
+				return instance;
+			}
+
+			function makeEntity(instance, physics){
+				const id = generate_id();
+				const entity = {instance, ...physics, id};
+				return entity;
+			}
+
+			function generate_id(){
+				return current_id++;
+			}
+
+			function remove_ent(ent){
+				for (let n = 0; n < entities.length; n++) {
+					if (entities[n].id == ent.id){
+						entities.splice(n, 1);
+						break;
+					}
+				}
+			}
+
+			function makeLight(pos, color, intensity){
+				const light = new THREE.DirectionalLight(color, intensity);
+				light.position.set(pos[0], pos[1], pos[2]);
+				scene.add(light);
+			}
+
+			makeLight([-10, 2, 4], 0xFFCCCC, 2.0);
+			//makeLight([1, -3, 15], 0x00CCFF, 2.0);
+			//makeLight([1, 3, -15], 0xAACCFF, 1.0);
+
+			
+			
+			function generate_disk(disk_origin, disk_direction, count, disk_radius, mass_base, mass_spread){
+				for(let i = 0; i < count; i++){
+					disk_direction.normalize(); //sanitization...
+
+					const seed = Math.random(); //Generate...
+					const mass = mass_base + seed*seed*mass_spread;
+					const color = 0xFFFFFF;//*seed*seed;
+					const radius = Math.pow((mass*0.75)/(3.142*5000), 1/3);
+					const geometry = new THREE.OctahedronGeometry(radius);
+				
+					const point_on_plane = new THREE.Vector3().randomDirection().cross(disk_direction).setLength((Math.random())*disk_radius);
+
+					const position = point_on_plane.add(disk_origin);
+					
+					entities.push(makeEntity(
+						makeInstance( [position.x, position.y, position.z], geometry, color	), 
+						{	
+							radius:radius,
+							velocity:new THREE.Vector3(Math.random()-0.5,Math.random()-0.5,Math.random()-0.5).cross(disk_direction).multiplyScalar(.2),
+							//velocity:new THREE.Vector3(0,0,0),
+							mass:mass
+						}
+					));
+				}
+			}
+
+			function generate_single(position, velocity, mass){
+				
+					const color = 0xFFFFFF*mass;
+					const radius = Math.pow((mass*0.75)/(3.142*5000), 1/3);
+					const detail = Math.round(Math.log10(mass));
+					const geometry = new THREE.OctahedronGeometry(radius, detail);
+					
+					entities.push(makeEntity(
+						makeInstance( [position.x, position.y, position.z], geometry, color	), 
+						{	
+							radius:radius,
+							velocity:velocity,
+							mass:mass
+						}
+					));
+			}
+
+			//generate_single(new THREE.Vector3(3,0,0), new THREE.Vector3(-0.4,0,0), 100000);
+			generate_disk(new THREE.Vector3(0,0,5), new THREE.Vector3(0,0,1), 100, 25, 0.1, 100);
+			generate_disk(new THREE.Vector3(0,0,2), new THREE.Vector3(0.1,0.5,0), 100, 25, 0.1, 100);
+
+			
+			generate_single(new THREE.Vector3(-3,0,1), new THREE.Vector3(0,-0.307,0), 100000);
+			generate_single(new THREE.Vector3(3,0,-1), new THREE.Vector3(0,0.307,0), 100000);
+
+			function resizeRendererToDisplaySize(renderer) {
+				const canvas = renderer.domElement;
+				const pixelRatio = window.devicePixelRatio;
+				const width  = canvas.clientWidth  * pixelRatio | 0;
+				const height = canvas.clientHeight * pixelRatio | 0;
+				const needResize = canvas.width !== width || canvas.height !== height;
+				if (needResize) {
+					renderer.setSize(width, height, false);
+				}
+				return needResize;
+			}
+
+			function render(time) {
+				time *= 0.001;  // convert time to seconds
+				let dt = clock.getDelta();
+
+				for(let i = 0; i < entities.length; i++){
+					let entity = entities[i];	
+
+					entity.instance.position.addScaledVector(entity.velocity, dt);
+					
+					//Gravitation + Collisions:
+
+					for(let j = 0; j < entities.length; j++){
+						let other = entities[j];
+
+						if(i != j) {
+							let distance_2 = new THREE.Vector3(0,0,0).subVectors(other.instance.position, entity.instance.position).lengthSq();
+							let collision_distance_2 = (entity.radius + other.radius)*(entity.radius + other.radius);
+
+							if(distance_2 < collision_distance_2){
+								console.log("collision!");
+								const mass_3 = entity.mass + other.mass;
+								//center of mass
+								const position_3 = new THREE.Vector3(0,0,0).addVectors(entity.instance.position.multiplyScalar(entity.mass), other.instance.position.multiplyScalar(other.mass)).multiplyScalar(1.0/mass_3);
+								//new velocity based on summed momentum
+								const velocity_3 = new THREE.Vector3(0,0,0).addVectors(entity.velocity.multiplyScalar(entity.mass), other.velocity.multiplyScalar(other.mass)).multiplyScalar(1.0/mass_3);
+								
+								scene.remove(entity.instance);
+								scene.remove(other.instance);
+
+								remove_ent(entity);
+								remove_ent(other);
+
+								console.log(entities);
+
+								console.log(`i = ${i}\tj = ${j}`)
+								if(j > i){
+									j--;
+									i-=2;
+									if (i < -1) i = entities.length -1;
+								} else {
+									i--;
+									j-=2;
+									if (j < -1) j = entities.length -1;
+								}
+
+								console.log(`i = ${i}\tj = ${j}`)
+
+								console.log(entities);
+
+								generate_single(position_3, velocity_3, mass_3);
+
+							} else {
+								let diff_vector = new THREE.Vector3().subVectors(other.instance.position, entity.instance.position);
+
+								const r2 = diff_vector.lengthSq();
+								const mag = (G*other.mass*dt)/(r2);
+								
+								diff_vector.setLength(mag);
+
+								entity.velocity.add(diff_vector);
+							}
+						}
+					}
+					
+				}
+
+				if (resizeRendererToDisplaySize(renderer)) {
+					const canvas = renderer.domElement;
+					camera.aspect = canvas.clientWidth / canvas.clientHeight;
+					camera.updateProjectionMatrix();
+				}
+
+				renderer.render(scene, camera);
+				
+				requestAnimationFrame(render);
+			}
+			requestAnimationFrame(render);
+		}
+
+		main();
+	</script>
+</html>
+
+
+
