@@ -13,3 +13,6 @@
 	- camera passive orbit
 	- display text/debug information for selected body (bodies)
 	- 
+
+TODO:
+- split stuff into multiple files

@@ -28,10 +28,10 @@
 
 	<script type="importmap">
 		{
-		"imports": {
-			"three": "./node_modules/three/build/three.module.js",
-			"three/addons/": "./node_modules/three/examples/jsm/"
-		}
+			"imports": {
+				"three": "./node_modules/three/build/three.module.js",
+				"three/addons/": "./node_modules/three/examples/jsm/"
+			}
 		}
 	</script>
 
@@ -39,17 +39,22 @@
 		import * as THREE from 'three';
 		import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
 
+		const renderer = new THREE.WebGLRenderer();
+		renderer.shadowMap.enabled = true;
+		renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
 		function main() {
 			let current_id = 0;
 
 			const clock = new THREE.Clock();
 			const G = 0.00001;
+			const DENSITY = 15000;
 			const canvas = document.querySelector('#canvas');
 			const renderer = new THREE.WebGLRenderer({canvas});
 			const fov = 90;
 			const aspect = canvas.width/canvas.height;
 			const near = 0.1;
-			const far = 1000;
+			const far = 8000;
 
 			//CAMERA au ajaatro
 			const camera = new THREE.PerspectiveCamera(fov, aspect, near, far);
@@ -95,24 +100,32 @@
 			function makeLight(pos, color, intensity){
 				const light = new THREE.DirectionalLight(color, intensity);
 				light.position.set(pos[0], pos[1], pos[2]);
+				light.castShadow = true;
+				light.shadow.mapSize.width = 512; // default
+				light.shadow.mapSize.height = 512; // default
+				light.shadow.camera.near = 0.5; // default
+				light.shadow.camera.far = 500; // default
 				scene.add(light);
+				
 			}
 
-			makeLight([-10, 2, 4], 0xFFCCCC, 2.0);
+			makeLight([3, 2, 4], 0xFFCCCC, 2.0);
+
 			//makeLight([1, -3, 15], 0x00CCFF, 2.0);
 			//makeLight([1, 3, -15], 0xAACCFF, 1.0);
 
 			
 			
-			function generate_disk(disk_origin, disk_direction, count, disk_radius, mass_base, mass_spread){
+			function generate_disk(disk_origin, disk_direction, count, disk_radius, mass_base, mass_spread, velocity_max){
 				for(let i = 0; i < count; i++){
 					disk_direction.normalize(); //sanitization...
 
 					const seed = Math.random(); //Generate...
-					const mass = mass_base + seed*seed*mass_spread;
+					const mass = mass_base * (1 + seed*seed*mass_spread);
 					const color = 0xFFFFFF;//*seed*seed;
-					const radius = Math.pow((mass*0.75)/(3.142*5000), 1/3);
-					const geometry = new THREE.OctahedronGeometry(radius);
+					const radius = Math.pow((mass*0.75)/(3.142*DENSITY), 1/3);
+					const detail = Math.round(Math.log10(mass));
+					const geometry = new THREE.OctahedronGeometry(radius, detail);
 				
 					const point_on_plane = new THREE.Vector3().randomDirection().cross(disk_direction).setLength((Math.random())*disk_radius);
 
@@ -122,38 +135,100 @@
 						makeInstance( [position.x, position.y, position.z], geometry, color	), 
 						{	
 							radius:radius,
-							velocity:new THREE.Vector3(Math.random()-0.5,Math.random()-0.5,Math.random()-0.5).cross(disk_direction).multiplyScalar(.2),
-							//velocity:new THREE.Vector3(0,0,0),
+							velocity:new THREE.Vector3().randomDirection().cross(disk_direction).multiplyScalar(Math.random()*Math.random()*velocity_max),
 							mass:mass
 						}
 					));
 				}
 			}
 
+			function generate_sphere(sphere_origin, sphere_radius, count, mass_base, mass_spread, velocity_max){
+
+				const rotation = new THREE.Vector3().rotation;
+
+				for(let i = 0; i < count; i++){
+
+					const seed = Math.random(); //Generate...
+					const mass = mass_base * (1 + seed*seed*mass_spread);
+					const color = 0xFFFFFF;//*seed*seed;
+					const radius = Math.pow((mass*0.75)/(3.142*DENSITY), 1/3);
+					const detail = Math.round(Math.log10(mass));
+					const geometry = new THREE.OctahedronGeometry(radius, detail);
+					const point_in_sphere = new THREE.Vector3().randomDirection().setLength(Math.random()*sphere_radius);
+					const position = point_in_sphere.add(sphere_origin);
+					
+					
+					entities.push(makeEntity(
+						makeInstance( [position.x, position.y, position.z], geometry, color	), 
+						{	
+							radius:radius,
+							velocity:new THREE.Vector3().randomDirection().multiplyScalar(Math.random()*velocity_max),
+							mass:mass
+						}
+					));
+				}
+
+			}
+
+			
+
 			function generate_single(position, velocity, mass){
 				
 					const color = 0xFFFFFF*mass;
-					const radius = Math.pow((mass*0.75)/(3.142*5000), 1/3);
+					const radius = Math.pow((mass*0.75)/(3.142*DENSITY), 1/3);
 					const detail = Math.round(Math.log10(mass));
 					const geometry = new THREE.OctahedronGeometry(radius, detail);
-					
-					entities.push(makeEntity(
+					const ent = makeEntity(
 						makeInstance( [position.x, position.y, position.z], geometry, color	), 
 						{	
 							radius:radius,
 							velocity:velocity,
 							mass:mass
 						}
-					));
+					)
+					entities.push(ent);
+					return ent;
+			}
+
+			function generate_system(position, star_mass, primary_satellite_count, mass_base, mass_spread, disk_radius, irregularity){
+				
+				const disk_direction = new THREE.Vector3().randomDirection();
+				const origin = new THREE.Vector3().add(position);
+				const star = generate_single(position, new THREE.Vector3(), star_mass);
+
+				for(let i = 0; i < primary_satellite_count; i++){
+					
+					const seed 		= Math.random(); //Generate...
+					const mass 		= mass_base * (1 + seed*seed*mass_spread);
+
+					const local_plane_direction = new THREE.Vector3().add(disk_direction).applyAxisAngle(new THREE.Vector3().randomDirection(), Math.random()*irregularity)
+				
+					const point_on_plane 	= new THREE.Vector3().randomDirection().cross(disk_direction).setLength((Math.random())*disk_radius);
+					
+					const position 			= point_on_plane.add(origin);
+					const to_center = new THREE.Vector3().subVectors(origin, position);
+
+					const velocity = new THREE.Vector3().crossVectors(to_center, local_plane_direction).setLength(Math.sqrt(G*star_mass/to_center.length()));
+
+					const planet = generate_single(position, velocity, mass);
+				}
+				
+			}
+
+			
+			function generate_complex_system(){
+
 			}
 
 			//generate_single(new THREE.Vector3(3,0,0), new THREE.Vector3(-0.4,0,0), 100000);
-			generate_disk(new THREE.Vector3(0,0,5), new THREE.Vector3(0,0,1), 100, 25, 0.1, 100);
-			generate_disk(new THREE.Vector3(0,0,2), new THREE.Vector3(0.1,0.5,0), 100, 25, 0.1, 100);
-
 			
-			generate_single(new THREE.Vector3(-3,0,1), new THREE.Vector3(0,-0.307,0), 100000);
-			generate_single(new THREE.Vector3(3,0,-1), new THREE.Vector3(0,0.307,0), 100000);
+			//generate_disk(new THREE.Vector3(0,0,5), new THREE.Vector3(0,0,1), 100, 25, 0.1, 400, 0.1);
+			//generate_disk(new THREE.Vector3(0,0,-5), new THREE.Vector3(0,0,1), 800, 25, 0.001, 1, 0.1);
+			//sphere_origin, sphere_radius, count, mass_base, mass_spread, velocity_max
+			generate_sphere(new THREE.Vector3(0,0,0), 10, 600, 1, 20, 1);
+
+			generate_system(new THREE.Vector3(0,0,1), 100000, 100, .001, 100000, 40, 1);
+
 
 			function resizeRendererToDisplaySize(renderer) {
 				const canvas = renderer.domElement;
@@ -186,7 +261,7 @@
 							let collision_distance_2 = (entity.radius + other.radius)*(entity.radius + other.radius);
 
 							if(distance_2 < collision_distance_2){
-								console.log("collision!");
+								
 								const mass_3 = entity.mass + other.mass;
 								//center of mass
 								const position_3 = new THREE.Vector3(0,0,0).addVectors(entity.instance.position.multiplyScalar(entity.mass), other.instance.position.multiplyScalar(other.mass)).multiplyScalar(1.0/mass_3);
@@ -199,9 +274,6 @@
 								remove_ent(entity);
 								remove_ent(other);
 
-								console.log(entities);
-
-								console.log(`i = ${i}\tj = ${j}`)
 								if(j > i){
 									j--;
 									i-=2;
@@ -211,10 +283,6 @@
 									j-=2;
 									if (j < -1) j = entities.length -1;
 								}
-
-								console.log(`i = ${i}\tj = ${j}`)
-
-								console.log(entities);
 
 								generate_single(position_3, velocity_3, mass_3);
 
